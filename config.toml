@@ -1,0 +1,16 @@
+[user]
+name = "nashzhou"
+email = "zhouhaipeng@nuaa.edu.com"
+auto_signoff = true 
+
+[remote]
+provider = "Gitcode" 
+api_url = "https://api.gitcode.com/api/v5"
+token = "E3gA8sZ54t-6K8L5kwyiAi4k"
+
+[repo]
+project_id = "nashzhou/vkt_test_space"
+default_branch = "main"
+
+[template]
+pr_prefix = "[VIRT-TOOL]"

@@ -1,0 +1,4 @@
+.vscode
+/target
+.claude
+Cargo.lock
