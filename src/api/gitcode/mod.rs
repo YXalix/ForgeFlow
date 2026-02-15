@@ -176,7 +176,8 @@ impl GitCodeProvider {
         use sha2::{Digest, Sha256};
         use std::collections::HashMap;
 
-        let prefix = parent_path.map(|p| p.trim_end_matches('/')).unwrap_or("");
+        // Normalize the prefix: remove leading/trailing slashes
+        let prefix = parent_path.map(|p| p.trim_matches('/')).unwrap_or("");
         let prefix_with_slash = if prefix.is_empty() {
             "".to_string()
         } else {
@@ -216,8 +217,15 @@ impl GitCodeProvider {
                 let trimmed = relative_path.trim_end_matches('/');
                 let first_sep = trimmed.find('/');
                 let (name, is_dir) = match first_sep {
-                    Some(pos) => (trimmed[..pos].to_string(), true),
-                    None => (trimmed.to_string(), path.ends_with('/')),
+                    Some(pos) => {
+                        // There's a nested component, so this is a directory
+                        (trimmed[..pos].to_string(), true)
+                    }
+                    None => {
+                        // No nested component - check if original path ends with /
+                        // to determine if it's a directory
+                        (trimmed.to_string(), path.ends_with('/'))
+                    }
                 };
 
                 // Use the full reconstructed path for the child
@@ -541,7 +549,126 @@ impl ForgeProvider for GitCodeProvider {
         let repo_response: GitCodeRepoResponse = self.handle_response(response).await?;
         Ok(repo_response.into())
     }
+
+    /// Check if a file exists using the file_list API with file_name parameter
+    /// https://api.gitcode.com/api/v5/repos/:owner/:repo/file_list
+    async fn file_exists(&self, file_path: &str, ref_branch: Option<&str>) -> Result<bool> {
+        let mut api_path = format!("repos/{}/{}/file_list", self.owner, self.repo);
+
+        // Build query parameters with file_name to search for specific file
+        let mut params = Vec::new();
+
+        // Add file_name parameter to search for the specific file
+        params.push(format!("file_name={}", urlencoding::encode(file_path)));
+
+        if let Some(ref_branch) = ref_branch {
+            params.push(format!("ref_name={}", urlencoding::encode(ref_branch)));
+        }
+
+        if !params.is_empty() {
+            api_path = format!("{}?{}", api_path, params.join("&"));
+        }
+
+        let response = self.build_request(Method::GET, &api_path).send().await?;
+
+        if response.status() == StatusCode::NOT_FOUND {
+            return Ok(false);
+        }
+
+        let paths: GitTreeResponse = self.handle_response(response).await?;
+
+        // Check if the file path is in the returned list
+        Ok(paths.iter().any(|p| p.trim_end_matches('/') == file_path.trim_end_matches('/')))
+    }
 }
 
 #[cfg(test)]
-mod tests {}
+mod tests {
+    use super::*;
+
+    fn create_test_provider() -> GitCodeProvider {
+        // Create a minimal provider for testing process_paths logic
+        GitCodeProvider {
+            client: Client::new(),
+            base_url: "https://api.gitcode.com".to_string(),
+            token: "test".to_string(),
+            owner: "test".to_string(),
+            repo: "test".to_string(),
+            default_branch: "main".to_string(),
+        }
+    }
+
+    #[test]
+    fn test_process_paths_with_leading_slash() {
+        let provider = create_test_provider();
+        let paths = vec![
+            "src/main.rs".to_string(),
+            "src/lib.rs".to_string(),
+            "src/commands/mod.rs".to_string(),
+            "Cargo.toml".to_string(),
+        ];
+
+        // Test with leading slash - should normalize and work
+        let items = provider.process_paths(paths.clone(), Some("/src"), false);
+        assert_eq!(items.len(), 3);
+
+        let names: Vec<String> = items.iter().map(|i| i.name.clone()).collect();
+        assert!(names.contains(&"main.rs".to_string()));
+        assert!(names.contains(&"lib.rs".to_string()));
+        assert!(names.contains(&"commands".to_string()));
+    }
+
+    #[test]
+    fn test_process_paths_file_not_treated_as_dir() {
+        let provider = create_test_provider();
+        let paths = vec![
+            "src/main.rs".to_string(),
+            "src/lib.rs".to_string(),
+            "src/commands/mod.rs".to_string(),
+        ];
+
+        let items = provider.process_paths(paths, Some("src"), false);
+
+        // main.rs should be a file, not a directory
+        let main_rs = items.iter().find(|i| i.name == "main.rs").unwrap();
+        assert!(!main_rs.is_dir());
+        assert_eq!(main_rs.item_type, "blob");
+
+        // commands should be a directory
+        let commands = items.iter().find(|i| i.name == "commands").unwrap();
+        assert!(commands.is_dir());
+        assert_eq!(commands.item_type, "tree");
+    }
+
+    #[test]
+    fn test_process_paths_root_listing() {
+        let provider = create_test_provider();
+        let paths = vec![
+            "src/main.rs".to_string(),
+            "src/lib.rs".to_string(),
+            "Cargo.toml".to_string(),
+            "README.md".to_string(),
+        ];
+
+        let items = provider.process_paths(paths, None, false);
+        assert_eq!(items.len(), 3); // src/, Cargo.toml, README.md
+
+        let names: Vec<String> = items.iter().map(|i| i.name.clone()).collect();
+        assert!(names.contains(&"src".to_string()));
+        assert!(names.contains(&"Cargo.toml".to_string()));
+        assert!(names.contains(&"README.md".to_string()));
+    }
+
+    #[test]
+    fn test_process_paths_recursive() {
+        let provider = create_test_provider();
+        let paths = vec![
+            "src/main.rs".to_string(),
+            "src/lib.rs".to_string(),
+            "Cargo.toml".to_string(),
+        ];
+
+        let items = provider.process_paths(paths.clone(), None, true);
+        assert_eq!(items.len(), 3);
+    }
+}

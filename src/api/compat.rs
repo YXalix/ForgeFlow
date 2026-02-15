@@ -172,6 +172,18 @@ impl ApiClient {
     pub async fn get_repository_info(&self) -> Result<super::types::RepositoryInfo> {
         self.provider.get_repository_info().await
     }
+
+    /// Check if a file exists
+    ///
+    /// # Arguments
+    /// * `file_path` - Path to the file
+    /// * `ref_branch` - Optional branch/ref to check on
+    ///
+    /// # Returns
+    /// true if the file exists, false otherwise
+    pub async fn file_exists(&self, file_path: &str, ref_branch: Option<&str>) -> Result<bool> {
+        self.provider.file_exists(file_path, ref_branch).await
+    }
 }
 
 #[cfg(test)]
