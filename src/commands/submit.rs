@@ -6,7 +6,7 @@ use crate::api::ApiClient;
 use crate::cli::SubmitArgs;
 use crate::commands::Command;
 use crate::config::Config;
-use crate::error::{Result, VktError};
+use anyhow::{bail, Context as AnyhowContext, Result};
 use base64::Engine;
 use sha2::{Digest, Sha256};
 use std::path::Path;
@@ -100,24 +100,19 @@ impl Command for SubmitCommand {
         // 2. Check local file exists
         let local_path = Path::new(&self.args.local_path);
         if !local_path.exists() {
-            return Err(VktError::Validation(format!(
-                "File does not exist: {}",
-                self.args.local_path
-            )));
+            bail!("File does not exist: {}", self.args.local_path);
         }
 
         // Currently only single file submission is supported
         if local_path.is_dir() {
-            return Err(VktError::Validation(
-                "Directory submission not yet supported, please specify a single file".to_string(),
-            ));
+            bail!("Directory submission not yet supported, please specify a single file");
         }
 
         // 3. Generate target path
         let file_name = local_path
             .file_name()
             .and_then(|n| n.to_str())
-            .ok_or_else(|| VktError::Validation("Invalid filename".to_string()))?;
+            .context("Invalid filename")?;
         let target_path = format!("{}/{}", self.args.target.trim_end_matches('/'), file_name);
 
         // 4. Diff Check - check if remote exists
@@ -128,14 +123,14 @@ impl Command for SubmitCommand {
         {
             Ok(_) => true,
             Err(e) if e.is_not_found() => false,
-            Err(e) => return Err(e),
+            Err(e) => return Err(e.into()),
         };
 
         if remote_exists && !self.args.force {
-            return Err(VktError::Validation(format!(
+            bail!(
                 "Remote file already exists: {}. Use --force to overwrite",
                 target_path
-            )));
+            );
         }
 
         if remote_exists && self.args.force {
@@ -150,7 +145,7 @@ impl Command for SubmitCommand {
         {
             Ok(tree) => !tree.is_empty(), // Empty tree means no commits
             Err(e) if e.is_not_found() => false,
-            Err(e) => return Err(e),
+            Err(e) => return Err(e.into()),
         };
 
         // If repository has no commits, it can't be used with the API workflow
@@ -160,10 +155,7 @@ impl Command for SubmitCommand {
             println!("GitCode requires repositories to be initialized before using the API.");
             println!("Please initialize your repository by:");
             println!("  1. Visit: https://gitcode.com/{}", config.repo.project_id);
-            return Err(VktError::Validation(
-                "Repository not initialized. Please create a README file via web UI first."
-                    .to_string(),
-            ));
+            bail!("Repository not initialized. Please create a README file via web UI first.");
         }
 
         println!("✅ Repository has been initialized");

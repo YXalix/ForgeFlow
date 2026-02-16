@@ -7,7 +7,7 @@ use crate::api::types::TreeItem;
 use crate::cli::GetArgs;
 use crate::commands::Command;
 use crate::config::Config;
-use crate::error::{Result, VktError};
+use anyhow::{Context, Result};
 use colored::Colorize;
 use std::path::Path;
 
@@ -44,20 +44,21 @@ impl GetCommand {
         if let Some(parent) = output_path.parent()
             && !parent.exists()
         {
-            std::fs::create_dir_all(parent).map_err(VktError::Io)?;
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("Failed to create directory: {}", parent.display()))?;
         }
         Ok(())
     }
 
     /// Check if file exists and handle accordingly
-    fn check_existing_file(&self, output_path: &Path) -> Result<bool> {
+    fn check_existing_file(&self, output_path: &Path) -> Result<()> {
         if output_path.exists() && !self.args.force {
-            return Err(VktError::Validation(format!(
+            anyhow::bail!(
                 "File '{}' already exists, use -f/--force to overwrite",
                 output_path.display()
-            )));
+            );
         }
-        Ok(true)
+        Ok(())
     }
 
     /// Download a single file
@@ -301,10 +302,10 @@ impl Command for GetCommand {
                     Ok(items) => !items.is_empty(), // If has content, it's a directory
                     Err(_) => {
                         // Neither file nor directory, probably 404
-                        return Err(VktError::Api(format!(
+                        anyhow::bail!(
                             "Path '{}' does not exist or cannot be accessed",
                             remote_path
-                        )));
+                        );
                     }
                 }
             }
@@ -364,7 +365,7 @@ impl Command for GetCommand {
                 }
 
                 if success_count == 0 {
-                    return Err(VktError::Api("All files failed to download".to_string()));
+                    anyhow::bail!("All files failed to download");
                 }
             }
         } else {

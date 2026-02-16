@@ -5,7 +5,7 @@
 use crate::cli::ConfigArgs;
 use crate::commands::Command;
 use crate::config::Config;
-use crate::error::{Result, VktError};
+use anyhow::{Context, Result};
 use colored::Colorize;
 
 pub struct ConfigCommand {
@@ -90,7 +90,7 @@ impl Command for ConfigCommand {
             .args
             .key
             .as_ref()
-            .ok_or_else(|| VktError::Validation("Key is required".to_string()))?;
+            .context("Key is required")?;
 
         // Handle get mode (key only, no value)
         if self.args.value.is_none() {
@@ -102,7 +102,7 @@ impl Command for ConfigCommand {
             .args
             .value
             .as_ref()
-            .ok_or_else(|| VktError::Validation("Value is required".to_string()))?;
+            .context("Value is required")?;
 
         config.set_value(key, value)?;
         config.save_to_file(&config_path)?;

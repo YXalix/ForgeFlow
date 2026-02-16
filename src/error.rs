@@ -1,60 +1,47 @@
-use std::fmt;
+use thiserror::Error;
 
 /// VKT Error Types
-#[derive(Debug)]
+#[derive(Error, Debug)]
 pub enum VktError {
     /// Configuration error
+    #[error("Config error: {0}")]
     Config(String),
+
     /// API call error
+    #[error("API error: {0}")]
     Api(String),
+
     /// Network error
+    #[error("Network error: {0}")]
     Network(String),
+
     /// IO error
-    Io(std::io::Error),
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
+
     /// Parameter validation error
+    #[error("Validation error: {0}")]
     Validation(String),
+
     /// Authentication failed (401)
+    #[error("Authentication failed: {0}")]
     AuthInvalid(String),
+
     /// Permission denied (403)
+    #[error("Permission denied: {0}")]
     PermissionDenied(String),
+
     /// Rate limited (429)
+    #[error("Rate limited: {0}")]
     RateLimited(String),
+
     /// Resource not found (404)
+    #[error("Resource not found: {0}")]
     ApiNotFound(String),
+
     /// Resource conflict (409)
+    #[error("Resource conflict: {0}")]
     Conflict(String),
-}
-
-impl fmt::Display for VktError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            VktError::Config(msg) => write!(f, "Config error: {}", msg),
-            VktError::Api(msg) => write!(f, "API error: {}", msg),
-            VktError::Network(msg) => write!(f, "Network error: {}", msg),
-            VktError::Io(err) => write!(f, "IO error: {}", err),
-            VktError::Validation(msg) => write!(f, "Validation error: {}", msg),
-            VktError::AuthInvalid(msg) => write!(f, "Authentication failed: {}", msg),
-            VktError::PermissionDenied(msg) => write!(f, "Permission denied: {}", msg),
-            VktError::RateLimited(msg) => write!(f, "Rate limited: {}", msg),
-            VktError::ApiNotFound(msg) => write!(f, "Resource not found: {}", msg),
-            VktError::Conflict(msg) => write!(f, "Resource conflict: {}", msg),
-        }
-    }
-}
-
-impl std::error::Error for VktError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            VktError::Io(err) => Some(err),
-            _ => None,
-        }
-    }
-}
-
-impl From<std::io::Error> for VktError {
-    fn from(err: std::io::Error) -> Self {
-        VktError::Io(err)
-    }
 }
 
 impl From<reqwest::Error> for VktError {

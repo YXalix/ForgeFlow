@@ -7,7 +7,7 @@ pub mod get;
 pub mod list;
 pub mod submit;
 
-use crate::error::Result;
+use anyhow::Result;
 
 /// Command trait
 #[async_trait::async_trait]

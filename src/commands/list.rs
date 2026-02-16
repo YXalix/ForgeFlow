@@ -6,7 +6,7 @@ use crate::api::ApiClient;
 use crate::cli::ListArgs;
 use crate::commands::Command;
 use crate::config::Config;
-use crate::error::Result;
+use anyhow::Result;
 use colored::Colorize;
 
 /// list command
