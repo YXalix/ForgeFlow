@@ -16,8 +16,7 @@ mod types;
 
 use types::{
     CreateBranchRequest, CreateFileRequest, CreatePullRequest, GitCodeBranchResponse,
-    GitCodeCommitResponse, GitCodeContentResponse, GitCodePullResponse, GitCodeRepoResponse,
-    GitRefResponse, GitTreeResponse, RequestReviewers, path_to_tree_item,
+    GitCodeCommitResponse, GitCodeContentResponse, GitCodePullResponse, GitCodeRepoResponse, GitTreeResponse, RequestReviewers, path_to_tree_item,
 };
 
 /// GitCode API Provider
@@ -136,31 +135,6 @@ impl GitCodeProvider {
                 _ => VktError::Api(format!("API error (HTTP {}): {}", status, error_text)),
             })
         }
-    }
-
-    /// Get the SHA of the latest commit on a branch
-    /// https://api.gitcode.com/api/v5/repos/:owner/:repo/branches/:branch
-    async fn get_branch_sha(&self, branch: &str) -> Result<String> {
-        let path = format!("repos/{}/{}/branches/{}", self.owner, self.repo, branch);
-
-        let response = self.build_request(Method::GET, &path).send().await?;
-        let branch_info: GitCodeBranchResponse = self.handle_response(response).await?;
-
-        // Extract SHA from the nested structure
-        branch_info
-            .commit
-            .id
-            .or_else(|| branch_info.commit.sha.clone())
-            .or_else(|| {
-                branch_info
-                    .commit
-                    .commit
-                    .as_ref()
-                    .and_then(|c| c.sha.clone())
-            })
-            .ok_or_else(|| {
-                VktError::Api("Could not extract commit SHA from branch response".to_string())
-            })
     }
 
     /// Process API paths into TreeItems
@@ -590,7 +564,7 @@ mod tests {
         // Create a minimal provider for testing process_paths logic
         GitCodeProvider {
             client: Client::new(),
-            base_url: "https://api.gitcode.com".to_string(),
+            base_url: "https://api.gitcode.com/api/v5".to_string(),
             token: "test".to_string(),
             owner: "test".to_string(),
             repo: "test".to_string(),

@@ -109,8 +109,8 @@ auto_signoff = true               # Optional: Add Signed-off-by automatically
 
 [remote]
 provider = "Gitcode"              # Required: GitCode, GitLab, or GitHub
-api_url = "https://gitcode.com/api/v5"  # Required: API endpoint URL
-token = "gct_xxxxxxxxxxxx"        # Required: Personal access token
+api_url = "https://api.gitcode.com/api/v5"  # Required: API endpoint URL
+token = "xxxxxxxxxxxx"        # Required: Personal access token
 
 [repo]
 project_id = "owner/repo"         # Required: Project identifier (owner/repo)
@@ -138,7 +138,7 @@ export VKT_REPO_PROJECT_ID="different/project"
 ```toml
 [remote]
 provider = "Gitcode"
-api_url = "https://gitcode.com/api/v5"
+api_url = "https://api.gitcode.com/api/v5"
 token = "xxxxxxxxxxxxxxxxxxxx"
 ```
 

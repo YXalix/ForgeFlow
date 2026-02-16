@@ -1,5 +1,5 @@
 use vkt::cli::{Commands, parse_args};
-use vkt::commands::{Command, get::GetCommand, list::ListCommand, submit::SubmitCommand};
+use vkt::commands::{Command, config::ConfigCommand, get::GetCommand, list::ListCommand, submit::SubmitCommand};
 
 #[tokio::main]
 async fn main() {
@@ -16,6 +16,10 @@ async fn main() {
         }
         Commands::Submit(args) => {
             let cmd = SubmitCommand::new(args);
+            cmd.execute().await
+        }
+        Commands::Config(args) => {
+            let cmd = ConfigCommand::new(args);
             cmd.execute().await
         }
     };

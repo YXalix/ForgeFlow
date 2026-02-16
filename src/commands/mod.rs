@@ -2,6 +2,7 @@
 //!
 //! Contains implementations for list, get, and submit commands
 
+pub mod config;
 pub mod get;
 pub mod list;
 pub mod submit;

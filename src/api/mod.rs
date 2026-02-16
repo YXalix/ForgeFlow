@@ -135,7 +135,7 @@ mod tests {
 
     #[test]
     fn test_create_provider_gitcode() {
-        let config = create_test_config("https://gitcode.com/api/v5".to_string());
+        let config = create_test_config("https://api.gitcode.com/api/v5".to_string());
         let provider = super::create_provider(&config);
         assert!(provider.is_ok());
     }
@@ -146,7 +146,7 @@ mod tests {
         use crate::config::ProviderType;
 
         assert_eq!(
-            detect_provider("https://gitcode.com/api/v5"),
+            detect_provider("https://api.gitcode.com/api/v5"),
             ProviderType::GitCode
         );
         assert_eq!(

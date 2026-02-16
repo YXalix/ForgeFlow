@@ -262,7 +262,7 @@ mod tests {
             },
             remote: crate::config::RemoteConfig {
                 provider: "Gitcode".to_string(),
-                api_url: "https://api.example.com".to_string(),
+                api_url: "https://api.gitcode.com/api/v5".to_string(),
                 token: "test-token".to_string(),
             },
             repo: crate::config::RepoConfig {

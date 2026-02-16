@@ -3,7 +3,7 @@
 //! Handles loading and validation of TOML configuration files
 
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::error::{Result, VktError};
 
@@ -63,6 +63,16 @@ impl ProviderType {
             ProviderType::GitLab => "gitlab",
             ProviderType::GitHub => "github",
             ProviderType::Unknown(s) => s.as_str(),
+        }
+    }
+
+    /// Get the default API URL for this provider
+    pub fn default_api_url(&self) -> Option<&'static str> {
+        match self {
+            ProviderType::GitCode => Some("https://api.gitcode.com/api/v5"),
+            ProviderType::GitLab => Some("https://gitlab.com/api/v4"),
+            ProviderType::GitHub => Some("https://api.github.com"),
+            ProviderType::Unknown(_) => None,
         }
     }
 }
@@ -127,6 +137,250 @@ impl Config {
         let config_dir = dirs::config_dir()
             .ok_or_else(|| VktError::Config("Cannot get configuration directory".to_string()))?;
         Ok(config_dir.join("vkt").join("config.toml"))
+    }
+
+    /// Parse dotted key path (e.g., "user.name") into section and field
+    pub fn parse_key(key: &str) -> Result<(&str, &str)> {
+        let parts: Vec<&str> = key.split('.').collect();
+        if parts.len() != 2 {
+            return Err(VktError::Validation(format!(
+                "Invalid key format '{}'. Use format: section.field (e.g., user.name)",
+                key
+            )));
+        }
+        Ok((parts[0], parts[1]))
+    }
+
+    /// Get a config value as string by key path
+    /// Note: remote.token is masked for security; use environment variable for scripting
+    pub fn get_value(&self, key: &str) -> Result<String> {
+        let (section, field) = Self::parse_key(key)?;
+
+        match (section, field) {
+            ("user", "name") => Ok(self.user.name.clone()),
+            ("user", "email") => Ok(self.user.email.clone()),
+            ("user", "auto_signoff") => Ok(self.user.auto_signoff.to_string()),
+            ("remote", "provider") => Ok(self.remote.provider.clone()),
+            ("remote", "api_url") => Ok(self.remote.api_url.clone()),
+            ("remote", "token") => Ok("********".to_string()),
+            ("repo", "project_id") => Ok(self.repo.project_id.clone()),
+            ("repo", "default_branch") => Ok(self.repo.default_branch.clone()),
+            ("template", "pr_prefix") => Ok(self.template.pr_prefix.clone()),
+            _ => Err(VktError::Validation(format!("Unknown config key: {}", key))),
+        }
+    }
+
+    /// Update a single config value by key path
+    pub fn set_value(&mut self, key: &str, value: &str) -> Result<()> {
+        let (section, field) = Self::parse_key(key)?;
+
+        match (section, field) {
+            ("user", "name") => {
+                if value.is_empty() {
+                    return Err(VktError::Validation("User name cannot be empty".to_string()));
+                }
+                self.user.name = value.to_string();
+            }
+            ("user", "email") => {
+                if !Self::is_valid_email(value) {
+                    return Err(VktError::Validation(format!("Invalid email: {}", value)));
+                }
+                self.user.email = value.to_string();
+            }
+            ("user", "auto_signoff") => {
+                self.user.auto_signoff = value.parse().map_err(|_| {
+                    VktError::Validation(format!("Expected boolean value: {}", value))
+                })?;
+            }
+            ("remote", "provider") => {
+                if value.is_empty() {
+                    return Err(VktError::Validation("Provider cannot be empty".to_string()));
+                }
+                self.remote.provider = value.to_string();
+            }
+            ("remote", "api_url") => {
+                if !Self::is_valid_url(value) {
+                    return Err(VktError::Validation(format!("Invalid URL: {}", value)));
+                }
+                self.remote.api_url = value.to_string();
+            }
+            ("remote", "token") => {
+                if value.is_empty() {
+                    return Err(VktError::Validation("Token cannot be empty".to_string()));
+                }
+                self.remote.token = value.to_string();
+            }
+            ("repo", "project_id") => {
+                if !value.contains('/') {
+                    return Err(VktError::Validation(
+                        "Project ID must be in format: owner/repo".to_string(),
+                    ));
+                }
+                self.repo.project_id = value.to_string();
+            }
+            ("repo", "default_branch") => {
+                if value.is_empty() {
+                    return Err(VktError::Validation(
+                        "Default branch cannot be empty".to_string(),
+                    ));
+                }
+                self.repo.default_branch = value.to_string();
+            }
+            ("template", "pr_prefix") => {
+                self.template.pr_prefix = value.to_string();
+            }
+            _ => return Err(VktError::Validation(format!("Unknown config key: {}", key))),
+        }
+        Ok(())
+    }
+
+    /// Save config to file atomically
+    pub fn save_to_file(&self, path: &Path) -> Result<()> {
+        // Serialize to TOML
+        let content = toml::to_string_pretty(self)
+            .map_err(|e| VktError::Config(format!("Failed to serialize config: {}", e)))?;
+
+        // Ensure parent directory exists
+        if let Some(parent) = path.parent() {
+            if !parent.exists() {
+                std::fs::create_dir_all(parent).map_err(VktError::Io)?;
+            }
+        }
+
+        // Write to temp file first
+        let temp_path = path.with_extension("tmp");
+        std::fs::write(&temp_path, content).map_err(VktError::Io)?;
+
+        // Atomic rename
+        std::fs::rename(&temp_path, path).map_err(VktError::Io)?;
+
+        Ok(())
+    }
+
+    /// Run interactive configuration setup
+    pub fn interactive_setup() -> Result<Self> {
+        use std::io::{self, Write};
+
+        println!("Welcome to ForgeFlow! Let's set up your configuration.\n");
+
+        /// Prompt for user input with a message
+        fn prompt(message: &str) -> Result<String> {
+            print!("{}", message);
+            io::stdout().flush().map_err(VktError::Io)?;
+            let mut input = String::new();
+            io::stdin().read_line(&mut input).map_err(VktError::Io)?;
+            Ok(input.trim().to_string())
+        }
+
+        /// Prompt with a default value if user enters nothing
+        fn prompt_with_default(message: &str, default: &str) -> Result<String> {
+            print!("{} [{}]: ", message, default);
+            io::stdout().flush().map_err(VktError::Io)?;
+            let mut input = String::new();
+            io::stdin().read_line(&mut input).map_err(VktError::Io)?;
+            let trimmed = input.trim();
+            if trimmed.is_empty() {
+                Ok(default.to_string())
+            } else {
+                Ok(trimmed.to_string())
+            }
+        }
+
+        /// Prompt for a boolean value (y/n)
+        fn prompt_bool(message: &str) -> Result<bool> {
+            loop {
+                print!("{}", message);
+                io::stdout().flush().map_err(VktError::Io)?;
+                let mut input = String::new();
+                io::stdin().read_line(&mut input).map_err(VktError::Io)?;
+                match input.trim().to_lowercase().as_str() {
+                    "y" | "yes" | "true" | "1" => return Ok(true),
+                    "n" | "no" | "false" | "0" => return Ok(false),
+                    _ => println!("Please enter 'y' or 'n'"),
+                }
+            }
+        }
+
+        // User section
+        let name = loop {
+            let name = prompt("Your name: ")?;
+            if !name.is_empty() {
+                break name;
+            }
+            println!("Name cannot be empty. Please try again.");
+        };
+
+        let email = loop {
+            let email = prompt("Your email: ")?;
+            if Self::is_valid_email(&email) {
+                break email;
+            }
+            println!("Invalid email format. Please try again.");
+        };
+
+        let auto_signoff = prompt_bool("Auto sign-off commits? (y/n): ")?;
+
+        // Remote section
+        let provider = prompt_with_default("Provider (Gitcode/GitLab/GitHub)", "Gitcode")?;
+
+        // Get default API URL based on provider
+        let provider_type = ProviderType::parse(&provider);
+        let default_url = provider_type
+            .default_api_url()
+            .unwrap_or("https://api.example.com");
+
+        let api_url = loop {
+            let url = prompt_with_default("API URL", default_url)?;
+            if Self::is_valid_url(&url) {
+                break url;
+            }
+            println!("Invalid URL format. Please try again.");
+        };
+
+        let token = loop {
+            let token = prompt("API Token: ")?;
+            if !token.is_empty() {
+                break token;
+            }
+            println!("Token cannot be empty. Please try again.");
+        };
+
+        // Repo section
+        let project_id = loop {
+            let id = prompt("Project ID (owner/repo): ")?;
+            if id.contains('/') {
+                break id;
+            }
+            println!("Project ID must be in format: owner/repo");
+        };
+
+        let default_branch = prompt_with_default("Default branch", "main")?;
+
+        // Template section
+        let pr_prefix = prompt_with_default("PR prefix", "[VIRT-TOOL]")?;
+
+        let config = Config {
+            user: UserConfig {
+                name,
+                email,
+                auto_signoff,
+            },
+            remote: RemoteConfig {
+                provider,
+                api_url,
+                token,
+            },
+            repo: RepoConfig {
+                project_id,
+                default_branch,
+            },
+            template: TemplateConfig { pr_prefix },
+        };
+
+        // Validate before returning
+        config.validate()?;
+
+        Ok(config)
     }
 
     /// Load configuration from file
@@ -261,7 +515,7 @@ auto_signoff = true
 
 [remote]
 provider = "Gitcode"
-api_url = "https://gitcode.com/api/v4"
+api_url = "https://api.gitcode.com/api/v5"
 token = "your-api-token-here"
 
 [repo]
@@ -485,9 +739,151 @@ project_id = "owner/repo"
     fn test_remote_config_provider_type() {
         let remote = RemoteConfig {
             provider: "Gitcode".to_string(),
-            api_url: "https://gitcode.com/api/v5".to_string(),
+            api_url: "https://api.gitcode.com".to_string(),
             token: "test-token".to_string(),
         };
         assert_eq!(remote.provider_type(), ProviderType::GitCode);
+    }
+
+    #[test]
+    fn test_provider_type_default_api_url() {
+        assert_eq!(
+            ProviderType::GitCode.default_api_url(),
+            Some("https://api.gitcode.com/api/v5")
+        );
+        assert_eq!(
+            ProviderType::GitLab.default_api_url(),
+            Some("https://gitlab.com/api/v4")
+        );
+        assert_eq!(
+            ProviderType::GitHub.default_api_url(),
+            Some("https://api.github.com")
+        );
+        assert_eq!(
+            ProviderType::Unknown("custom".to_string()).default_api_url(),
+            None
+        );
+    }
+
+    #[test]
+    fn test_parse_key_valid() {
+        let (section, field) = Config::parse_key("user.name").unwrap();
+        assert_eq!(section, "user");
+        assert_eq!(field, "name");
+
+        let (section, field) = Config::parse_key("remote.token").unwrap();
+        assert_eq!(section, "remote");
+        assert_eq!(field, "token");
+    }
+
+    #[test]
+    fn test_parse_key_invalid() {
+        assert!(Config::parse_key("name").is_err());
+        assert!(Config::parse_key("user.name.extra").is_err());
+        assert!(Config::parse_key("").is_err());
+    }
+
+    #[test]
+    fn test_get_value() {
+        let config = create_valid_config();
+        assert_eq!(config.get_value("user.name").unwrap(), "Test");
+        assert_eq!(config.get_value("user.email").unwrap(), "test@example.com");
+        assert_eq!(config.get_value("user.auto_signoff").unwrap(), "true");
+        assert_eq!(config.get_value("remote.provider").unwrap(), "Gitcode");
+        assert_eq!(config.get_value("remote.api_url").unwrap(), "https://api.example.com");
+        // Token is masked for security
+        assert_eq!(config.get_value("remote.token").unwrap(), "********");
+        assert_eq!(config.get_value("repo.project_id").unwrap(), "owner/repo");
+        assert_eq!(config.get_value("repo.default_branch").unwrap(), "main");
+        assert_eq!(config.get_value("template.pr_prefix").unwrap(), "");
+    }
+
+    #[test]
+    fn test_get_value_unknown_key() {
+        let config = create_valid_config();
+        assert!(config.get_value("unknown.key").is_err());
+        assert!(config.get_value("user.unknown").is_err());
+    }
+
+    #[test]
+    fn test_set_value_user_name() {
+        let mut config = create_valid_config();
+        config.set_value("user.name", "New Name").unwrap();
+        assert_eq!(config.user.name, "New Name");
+    }
+
+    #[test]
+    fn test_set_value_user_email() {
+        let mut config = create_valid_config();
+        config.set_value("user.email", "new@example.com").unwrap();
+        assert_eq!(config.user.email, "new@example.com");
+    }
+
+    #[test]
+    fn test_set_value_user_email_invalid() {
+        let mut config = create_valid_config();
+        assert!(config.set_value("user.email", "invalid-email").is_err());
+    }
+
+    #[test]
+    fn test_set_value_user_auto_signoff() {
+        let mut config = create_valid_config();
+        config.set_value("user.auto_signoff", "false").unwrap();
+        assert!(!config.user.auto_signoff);
+        config.set_value("user.auto_signoff", "true").unwrap();
+        assert!(config.user.auto_signoff);
+    }
+
+    #[test]
+    fn test_set_value_remote_api_url() {
+        let mut config = create_valid_config();
+        config.set_value("remote.api_url", "https://new.example.com").unwrap();
+        assert_eq!(config.remote.api_url, "https://new.example.com");
+    }
+
+    #[test]
+    fn test_set_value_remote_api_url_invalid() {
+        let mut config = create_valid_config();
+        assert!(config.set_value("remote.api_url", "not-a-url").is_err());
+    }
+
+    #[test]
+    fn test_set_value_repo_project_id() {
+        let mut config = create_valid_config();
+        config.set_value("repo.project_id", "newowner/newrepo").unwrap();
+        assert_eq!(config.repo.project_id, "newowner/newrepo");
+    }
+
+    #[test]
+    fn test_set_value_repo_project_id_invalid() {
+        let mut config = create_valid_config();
+        assert!(config.set_value("repo.project_id", "invalid").is_err());
+    }
+
+    #[test]
+    fn test_set_value_unknown_key() {
+        let mut config = create_valid_config();
+        assert!(config.set_value("unknown.key", "value").is_err());
+    }
+
+    #[test]
+    fn test_save_and_load_roundtrip() {
+        use std::fs;
+
+        let config = create_valid_config();
+        let temp_path = std::env::temp_dir().join("vkt_test_config.toml");
+
+        // Save config
+        config.save_to_file(&temp_path).unwrap();
+
+        // Load config
+        let loaded = Config::parse_from_file(&temp_path).unwrap();
+        assert_eq!(loaded.user.name, config.user.name);
+        assert_eq!(loaded.user.email, config.user.email);
+        assert_eq!(loaded.remote.provider, config.remote.provider);
+        assert_eq!(loaded.repo.project_id, config.repo.project_id);
+
+        // Cleanup
+        fs::remove_file(&temp_path).unwrap();
     }
 }
